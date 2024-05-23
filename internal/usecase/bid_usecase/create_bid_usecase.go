@@ -2,13 +2,36 @@ package bid_usecase
 
 import (
 	"context"
-	"fullcycle-auction_go/configuration/logger"
-	"fullcycle-auction_go/internal/entity/bid_entity"
-	"fullcycle-auction_go/internal/internal_error"
+	"github.com/HunnTeRUS/fullcycle-auction-go/configuration/logger"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/entity/bid_entity"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/internal_error"
 	"os"
 	"strconv"
 	"time"
 )
+
+type BidUseCase struct {
+	BidRepository bid_entity.BidRepositoryInterface
+
+	timer               *time.Timer
+	maxBatchSize        int
+	batchInsertInterval time.Duration
+}
+
+func NewBidService(bidRepository bid_entity.BidRepositoryInterface) BidUseCaseInterface {
+	return &BidUseCase{
+		BidRepository:       bidRepository,
+		timer:               time.NewTimer(getBatchSizeInterval()),
+		maxBatchSize:        getMaxBatchSize(),
+		batchInsertInterval: getBatchSizeInterval(),
+	}
+}
+
+type BidUseCaseInterface interface {
+	CreateBid(ctx context.Context, bid BidInputDTO) *internal_error.InternalError
+	FindBidsByAuctionId(ctx context.Context, auctionId string) ([]BidOutputDTO, *internal_error.InternalError)
+	FindWinningBidByAuctionId(ctx context.Context, auctionId string) (*BidOutputDTO, *internal_error.InternalError)
+}
 
 type BidInputDTO struct {
 	UserId    string  `json:"user_id"`
@@ -17,119 +40,87 @@ type BidInputDTO struct {
 }
 
 type BidOutputDTO struct {
-	Id        string    `json:"id"`
-	UserId    string    `json:"user_id"`
-	AuctionId string    `json:"auction_id"`
-	Amount    float64   `json:"amount"`
-	Timestamp time.Time `json:"timestamp" time_format:"2006-01-02 15:04:05"`
-}
-
-type BidUseCase struct {
-	BidRepository bid_entity.BidEntityRepository
-
-	timer               *time.Timer
-	maxBatchSize        int
-	batchInsertInterval time.Duration
-	bidChannel          chan bid_entity.Bid
-}
-
-func NewBidUseCase(bidRepository bid_entity.BidEntityRepository) BidUseCaseInterface {
-	maxSizeInterval := getMaxBatchSizeInterval()
-	maxBatchSize := getMaxBatchSize()
-
-	bidUseCase := &BidUseCase{
-		BidRepository:       bidRepository,
-		maxBatchSize:        maxBatchSize,
-		batchInsertInterval: maxSizeInterval,
-		timer:               time.NewTimer(maxSizeInterval),
-		bidChannel:          make(chan bid_entity.Bid, maxBatchSize),
-	}
-
-	bidUseCase.triggerCreateRoutine(context.Background())
-
-	return bidUseCase
+	UserId    string    `json:"user_id" copier:"UserId"`
+	AuctionId string    `json:"auction_id" copier:"AuctionId"`
+	Amount    float64   `json:"amount" copier:"Amount"`
+	Timestamp time.Time `json:"timestamp" time_format:"2006-01-02 15:04:05" copier:"Timestamp"`
 }
 
 var bidBatch []bid_entity.Bid
 
-type BidUseCaseInterface interface {
-	CreateBid(
-		ctx context.Context,
-		bidInputDTO BidInputDTO) *internal_error.InternalError
+func (bs *BidUseCase) CreateBid(ctx context.Context, bidDTO BidInputDTO) *internal_error.InternalError {
+	bidChannel := make(chan bid_entity.Bid, bs.maxBatchSize)
 
-	FindWinningBidByAuctionId(
-		ctx context.Context, auctionId string) (*BidOutputDTO, *internal_error.InternalError)
-
-	FindBidByAuctionId(
-		ctx context.Context, auctionId string) ([]BidOutputDTO, *internal_error.InternalError)
-}
-
-func (bu *BidUseCase) triggerCreateRoutine(ctx context.Context) {
 	go func() {
-		defer close(bu.bidChannel)
+		defer close(bidChannel)
 
 		for {
 			select {
-			case bidEntity, ok := <-bu.bidChannel:
+			case bid, ok := <-bidChannel:
 				if !ok {
 					if len(bidBatch) > 0 {
-						if err := bu.BidRepository.CreateBid(ctx, bidBatch); err != nil {
-							logger.Error("error trying to process bid batch list", err)
+						err := bs.BidRepository.CreateBids(ctx, bidBatch)
+						if err != nil {
+							logger.Error("error trying to process the bid", err)
 						}
 					}
 					return
 				}
 
-				bidBatch = append(bidBatch, bidEntity)
+				bidBatch = append(bidBatch, bid)
 
-				if len(bidBatch) >= bu.maxBatchSize {
-					if err := bu.BidRepository.CreateBid(ctx, bidBatch); err != nil {
-						logger.Error("error trying to process bid batch list", err)
+				select {
+				case <-bs.timer.C:
+					err := bs.BidRepository.CreateBids(ctx, bidBatch)
+					if err != nil {
+						logger.Error("error trying to process the bid", err)
 					}
-
 					bidBatch = nil
-					bu.timer.Reset(bu.batchInsertInterval)
+					bs.timer.Reset(bs.batchInsertInterval)
+				default:
+					if len(bidBatch) >= bs.maxBatchSize {
+						err := bs.BidRepository.CreateBids(ctx, bidBatch)
+						if err != nil {
+							logger.Error("error trying to process the bid", err)
+						}
+						bidBatch = nil
+						bs.timer.Reset(bs.batchInsertInterval)
+					}
 				}
-			case <-bu.timer.C:
-				if err := bu.BidRepository.CreateBid(ctx, bidBatch); err != nil {
-					logger.Error("error trying to process bid batch list", err)
+			case <-bs.timer.C:
+				err := bs.BidRepository.CreateBids(ctx, bidBatch)
+				if err != nil {
+					logger.Error("error trying to process the bid", err)
 				}
 				bidBatch = nil
-				bu.timer.Reset(bu.batchInsertInterval)
+				bs.timer.Reset(bs.batchInsertInterval)
 			}
 		}
 	}()
-}
 
-func (bu *BidUseCase) CreateBid(
-	ctx context.Context,
-	bidInputDTO BidInputDTO) *internal_error.InternalError {
-
-	bidEntity, err := bid_entity.CreateBid(bidInputDTO.UserId, bidInputDTO.AuctionId, bidInputDTO.Amount)
+	bidEntity, err := bid_entity.CreateBid(bidDTO.UserId, bidDTO.AuctionId, bidDTO.Amount)
 	if err != nil {
 		return err
 	}
 
-	bu.bidChannel <- *bidEntity
+	bidChannel <- *bidEntity
 
 	return nil
 }
 
-func getMaxBatchSizeInterval() time.Duration {
+func getBatchSizeInterval() time.Duration {
 	batchInsertInterval := os.Getenv("BATCH_INSERT_INTERVAL")
-	duration, err := time.ParseDuration(batchInsertInterval)
-	if err != nil {
-		return 3 * time.Minute
+	if duration, err := time.ParseDuration(batchInsertInterval); err == nil {
+		return duration
 	}
 
-	return duration
+	return 3 * time.Minute
 }
 
 func getMaxBatchSize() int {
-	value, err := strconv.Atoi(os.Getenv("MAX_BATCH_SIZE"))
-	if err != nil {
-		return 5
+	if batchSize, err := strconv.Atoi(os.Getenv("MAX_BATCH_SIZE")); err == nil {
+		return batchSize
 	}
 
-	return value
+	return 5
 }

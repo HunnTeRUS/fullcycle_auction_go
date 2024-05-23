@@ -3,17 +3,19 @@ package user
 import (
 	"context"
 	"errors"
-	"fmt"
-	"fullcycle-auction_go/configuration/logger"
-	"fullcycle-auction_go/internal/entity/user_entity"
-	"fullcycle-auction_go/internal/internal_error"
+	"github.com/HunnTeRUS/fullcycle-auction-go/configuration/logger"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/entity/user_entity"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/internal_error"
+	"github.com/jinzhu/copier"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.uber.org/zap"
 )
 
 type UserEntityMongo struct {
-	Id   string `bson:"_id"`
-	Name string `bson:"name"`
+	Id   primitive.ObjectID `bson:"_id,omitempty" copier:"Id"`
+	Name string             `bson:"name" copier:"Name"`
 }
 
 type UserRepository struct {
@@ -26,27 +28,29 @@ func NewUserRepository(database *mongo.Database) *UserRepository {
 	}
 }
 
-func (ur *UserRepository) FindUserById(
-	ctx context.Context, userId string) (*user_entity.User, *internal_error.InternalError) {
-	filter := bson.M{"_id": userId}
+func (repo *UserRepository) FindUserByID(ctx context.Context, userId string) (*user_entity.User, *internal_error.InternalError) {
+	objectUserId, _ := primitive.ObjectIDFromHex(userId)
+	filter := bson.M{"_id": objectUserId}
 
 	var userEntityMongo UserEntityMongo
-	err := ur.Collection.FindOne(ctx, filter).Decode(&userEntityMongo)
+	err := repo.Collection.FindOne(ctx, filter).Decode(&userEntityMongo)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			logger.Error(fmt.Sprintf("User not found with this id = %d", userId), err)
-			return nil, internal_error.NewNotFoundError(
-				fmt.Sprintf("User not found with this id = %d", userId))
+			logger.Error("User not found", err, zap.String("UserID", userId))
+			return nil, internal_error.NewNotFoundError("User not found")
 		}
 
-		logger.Error("Error trying to find user by userId", err)
-		return nil, internal_error.NewInternalServerError("Error trying to find user by userId")
+		logger.Error("Error finding user_usecase by ID", err, zap.String("UserID", userId))
+		return nil, internal_error.NewInternalServerError("Error finding user_usecase by ID")
 	}
 
-	userEntity := &user_entity.User{
-		Id:   userEntityMongo.Id,
-		Name: userEntityMongo.Name,
+	var userEntity user_entity.User
+	if errCopier := copier.Copy(&userEntity, &userEntityMongo); errCopier != nil {
+		logger.Error("Error finding user_usecase by ID", errCopier, zap.String("UserID", userId))
+		return nil, internal_error.NewInternalServerError("Error finding user_usecase by ID")
 	}
 
-	return userEntity, nil
+	userEntity.Id = userId
+
+	return &userEntity, nil
 }

@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/fullcycle-auction_go.iml" filepath="$PROJECT_DIR$/.idea/fullcycle-auction_go.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/fullcycle-auction-go.iml" filepath="$PROJECT_DIR$/.idea/fullcycle-auction-go.iml" />
     </modules>
   </component>
 </project>

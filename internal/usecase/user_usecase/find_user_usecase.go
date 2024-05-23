@@ -2,40 +2,38 @@ package user_usecase
 
 import (
 	"context"
-	"fullcycle-auction_go/internal/entity/user_entity"
-	"fullcycle-auction_go/internal/internal_error"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/entity/user_entity"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/internal_error"
+	"github.com/jinzhu/copier"
 )
-
-func NewUserUseCase(userRepository user_entity.UserRepositoryInterface) UserUseCaseInterface {
-	return &UserUseCase{
-		userRepository,
-	}
-}
 
 type UserUseCase struct {
 	UserRepository user_entity.UserRepositoryInterface
 }
 
 type UserOutputDTO struct {
-	Id   string `json:"id"`
-	Name string `json:"name"`
+	Id   string `json:"id,omitempty" copier:"Id"`
+	Name string `json:"name,omitempty" copier:"Name"`
 }
 
 type UserUseCaseInterface interface {
-	FindUserById(
-		ctx context.Context,
-		id string) (*UserOutputDTO, *internal_error.InternalError)
+	FindUserByID(ctx context.Context, userID string) (*UserOutputDTO, *internal_error.InternalError)
 }
 
-func (u *UserUseCase) FindUserById(
-	ctx context.Context, id string) (*UserOutputDTO, *internal_error.InternalError) {
-	userEntity, err := u.UserRepository.FindUserById(ctx, id)
+func NewUserService(userRepository user_entity.UserRepositoryInterface) UserUseCaseInterface {
+	return &UserUseCase{UserRepository: userRepository}
+}
+
+func (us *UserUseCase) FindUserByID(ctx context.Context, userID string) (*UserOutputDTO, *internal_error.InternalError) {
+	userEntity, err := us.UserRepository.FindUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	return &UserOutputDTO{
-		Id:   userEntity.Id,
-		Name: userEntity.Name,
-	}, nil
+	var userOutputDTO UserOutputDTO
+	if err := copier.Copy(&userOutputDTO, userEntity); err != nil {
+		return nil, internal_error.NewInternalServerError(err.Error())
+	}
+
+	return &userOutputDTO, nil
 }

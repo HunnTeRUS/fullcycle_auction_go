@@ -1,18 +1,18 @@
 package internal_error
 
 type InternalError struct {
-	Message string
-	Err     string
+	Message string `json:"message"`
+	Err     string `json:"error"`
 }
 
-func (ie *InternalError) Error() string {
-	return ie.Message
+func (r *InternalError) Error() string {
+	return r.Message
 }
 
-func NewNotFoundError(message string) *InternalError {
+func NewBadRequestError(message string) *InternalError {
 	return &InternalError{
 		Message: message,
-		Err:     "not_found",
+		Err:     "bad_request",
 	}
 }
 
@@ -23,9 +23,9 @@ func NewInternalServerError(message string) *InternalError {
 	}
 }
 
-func NewBadRequestError(message string) *InternalError {
+func NewNotFoundError(message string) *InternalError {
 	return &InternalError{
 		Message: message,
-		Err:     "bad_request",
+		Err:     "not_found",
 	}
 }

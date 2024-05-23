@@ -2,43 +2,36 @@ package bid_usecase
 
 import (
 	"context"
-	"fullcycle-auction_go/internal/internal_error"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/internal_error"
+	"github.com/jinzhu/copier"
 )
 
-func (bu *BidUseCase) FindBidByAuctionId(
-	ctx context.Context, auctionId string) ([]BidOutputDTO, *internal_error.InternalError) {
-	bidList, err := bu.BidRepository.FindBidByAuctionId(ctx, auctionId)
+func (bs *BidUseCase) FindBidsByAuctionId(ctx context.Context, auctionId string) ([]BidOutputDTO, *internal_error.InternalError) {
+	var bidOutput []BidOutputDTO
+
+	bid, err := bs.BidRepository.FindBidsByAuctionId(ctx, auctionId)
 	if err != nil {
 		return nil, err
 	}
 
-	var bidOutputList []BidOutputDTO
-	for _, bid := range bidList {
-		bidOutputList = append(bidOutputList, BidOutputDTO{
-			Id:        bid.Id,
-			UserId:    bid.UserId,
-			AuctionId: bid.AuctionId,
-			Amount:    bid.Amount,
-			Timestamp: bid.Timestamp,
-		})
+	if err := copier.Copy(&bidOutput, bid); err != nil {
+		return nil, internal_error.NewInternalServerError(err.Error())
 	}
 
-	return bidOutputList, nil
+	return bidOutput, nil
 }
 
-func (bu *BidUseCase) FindWinningBidByAuctionId(
-	ctx context.Context, auctionId string) (*BidOutputDTO, *internal_error.InternalError) {
-	bidEntity, err := bu.BidRepository.FindWinningBidByAuctionId(ctx, auctionId)
+func (bs *BidUseCase) FindWinningBidByAuctionId(ctx context.Context, auctionId string) (*BidOutputDTO, *internal_error.InternalError) {
+	bid, err := bs.BidRepository.FindWinningBidByAuctionId(ctx, auctionId)
 	if err != nil {
 		return nil, err
 	}
 
 	bidOutput := &BidOutputDTO{
-		Id:        bidEntity.Id,
-		UserId:    bidEntity.UserId,
-		AuctionId: bidEntity.AuctionId,
-		Amount:    bidEntity.Amount,
-		Timestamp: bidEntity.Timestamp,
+		UserId:    bid.UserId,
+		AuctionId: bid.AuctionId,
+		Amount:    bid.Amount,
+		Timestamp: bid.Timestamp,
 	}
 
 	return bidOutput, nil

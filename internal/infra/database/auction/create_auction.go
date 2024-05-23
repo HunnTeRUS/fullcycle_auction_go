@@ -2,23 +2,25 @@ package auction
 
 import (
 	"context"
-	"fullcycle-auction_go/configuration/logger"
-	"fullcycle-auction_go/internal/entity/auction_entity"
-	"fullcycle-auction_go/internal/internal_error"
+	"github.com/HunnTeRUS/fullcycle-auction-go/configuration/logger"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/entity/auction_entity"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/internal_error"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.uber.org/zap"
 	"os"
 	"time"
 )
 
 type AuctionEntityMongo struct {
-	Id          string                          `bson:"_id"`
-	ProductName string                          `bson:"product_name"`
-	Category    string                          `bson:"category"`
-	Description string                          `bson:"description"`
-	Condition   auction_entity.ProductCondition `bson:"condition"`
-	Status      auction_entity.AuctionStatus    `bson:"status"`
-	Timestamp   int64                           `bson:"timestamp"`
+	ID          string                          `bson:"_id,omitempty" copier:"ID"`
+	ProductName string                          `bson:"productName" copier:"ProductName"`
+	Category    string                          `bson:"category" copier:"Category"`
+	Status      auction_entity.AuctionStatus    `bson:"status" copier:"Status"`
+	Description string                          `bson:"description" copier:"Description"`
+	Condition   auction_entity.ProductCondition `bson:"condition" copier:"Condition"`
+	Timestamp   int64                           `bson:"timestamp" copier:"Timestamp"`
 }
 
 type AuctionRepository struct {
@@ -31,48 +33,57 @@ func NewAuctionRepository(database *mongo.Database) *AuctionRepository {
 	}
 }
 
-func (ar *AuctionRepository) CreateAuction(
-	ctx context.Context,
-	auctionEntity *auction_entity.Auction) *internal_error.InternalError {
-	auctionEntityMongo := &AuctionEntityMongo{
-		Id:          auctionEntity.Id,
-		ProductName: auctionEntity.ProductName,
-		Category:    auctionEntity.Category,
-		Description: auctionEntity.Description,
-		Condition:   auctionEntity.Condition,
-		Status:      auctionEntity.Status,
-		Timestamp:   auctionEntity.Timestamp.Unix(),
-	}
-
-	_, err := ar.Collection.InsertOne(ctx, auctionEntityMongo)
+func (repo *AuctionRepository) CreateAuction(ctx context.Context, auction *auction_entity.Auction) *internal_error.InternalError {
+	auctionID, err := repo.createAuction(ctx, auction)
 	if err != nil {
-		logger.Error("Error trying to insert auction", err)
-		return internal_error.NewInternalServerError("Error trying to insert auction")
+		logger.Error("error trying to create auction_usecase", err)
+		return internal_error.NewInternalServerError("Error trying to create auction_usecase")
 	}
 
 	go func() {
 		select {
 		case <-time.After(getAuctionInterval()):
 			update := bson.M{"$set": bson.M{"status": auction_entity.Completed}}
-			filter := bson.M{"_id": auctionEntityMongo.Id}
+			filter := bson.M{"_id": auctionID}
 
-			_, err := ar.Collection.UpdateOne(ctx, filter, update)
+			_, err := repo.Collection.UpdateOne(context.Background(), filter, update)
 			if err != nil {
-				logger.Error("Error trying to update auction status to completed", err)
-				return
+				logger.Error("Error updating auction_usecase status", err, zap.String("AuctionId", auctionID))
 			}
+		case <-ctx.Done():
+			return
 		}
 	}()
 
 	return nil
 }
 
-func getAuctionInterval() time.Duration {
-	auctionInterval := os.Getenv("AUCTION_INTERVAL")
-	duration, err := time.ParseDuration(auctionInterval)
-	if err != nil {
-		return time.Minute * 5
+func (repo *AuctionRepository) createAuction(ctx context.Context, auction *auction_entity.Auction) (string, *internal_error.InternalError) {
+	auctionEntityMongo := AuctionEntityMongo{
+		ID:          auction.Id,
+		ProductName: auction.ProductName,
+		Category:    auction.Category,
+		Status:      auction.Status,
+		Description: auction.Description,
+		Condition:   auction.Condition,
+		Timestamp:   auction.Timestamp.Unix(),
 	}
 
-	return duration
+	_, err := repo.Collection.InsertOne(ctx, auctionEntityMongo)
+	if err != nil {
+		logger.Error("Error inserting auction_usecase into MongoDB", err)
+		return primitive.NilObjectID.Hex(), internal_error.NewInternalServerError(err.Error())
+	}
+
+	logger.Info("Auction created successfully", zap.String("AuctionID", auction.Id))
+	return auctionEntityMongo.ID, nil
+}
+
+func getAuctionInterval() time.Duration {
+	batchInsertInterval := os.Getenv("AUCTION_INTERVAL")
+	if duration, err := time.ParseDuration(batchInsertInterval); err == nil {
+		return duration
+	}
+
+	return 5 * time.Minute
 }

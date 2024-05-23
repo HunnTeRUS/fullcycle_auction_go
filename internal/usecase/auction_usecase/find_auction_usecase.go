@@ -2,93 +2,60 @@ package auction_usecase
 
 import (
 	"context"
-	"fullcycle-auction_go/configuration/logger"
-	"fullcycle-auction_go/internal/entity/auction_entity"
-	"fullcycle-auction_go/internal/internal_error"
-	"fullcycle-auction_go/internal/usecase/bid_usecase"
+	"fmt"
+	"github.com/HunnTeRUS/fullcycle-auction-go/configuration/logger"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/entity/auction_entity"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/internal_error"
+	"github.com/HunnTeRUS/fullcycle-auction-go/internal/usecase/bid_usecase"
+	"github.com/jinzhu/copier"
 )
 
-func (au *AuctionUseCase) FindAuctionById(
-	ctx context.Context, id string) (*AuctionOutputDTO, *internal_error.InternalError) {
-	auctionEntity, err := au.auctionRepositoryInterface.FindAuctionById(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return &AuctionOutputDTO{
-		Id:          auctionEntity.Id,
-		ProductName: auctionEntity.ProductName,
-		Category:    auctionEntity.Category,
-		Description: auctionEntity.Description,
-		Condition:   ProductCondition(auctionEntity.Condition),
-		Status:      AuctionStatus(auctionEntity.Status),
-		Timestamp:   auctionEntity.Timestamp,
-	}, nil
-}
-
-func (au *AuctionUseCase) FindAuctions(
+func (bs *AuctionUseCase) FindAuctions(
 	ctx context.Context,
 	status AuctionStatus,
-	category, productName string) ([]AuctionOutputDTO, *internal_error.InternalError) {
-	auctionEntities, err := au.auctionRepositoryInterface.FindAuctions(
+	category string,
+	productName string) ([]AuctionOutputDTO, *internal_error.InternalError) {
+	auctionsEntity, err := bs.auctionRepository.FindAuctions(
 		ctx, auction_entity.AuctionStatus(status), category, productName)
 	if err != nil {
 		return nil, err
 	}
 
-	var auctionOutputs []AuctionOutputDTO
-	for _, value := range auctionEntities {
-		auctionOutputs = append(auctionOutputs, AuctionOutputDTO{
-			Id:          value.Id,
-			ProductName: value.ProductName,
-			Category:    value.Category,
-			Description: value.Description,
-			Condition:   ProductCondition(value.Condition),
-			Status:      AuctionStatus(value.Status),
-			Timestamp:   value.Timestamp,
-		})
+	var auctionOutputDTO []AuctionOutputDTO
+	if err := copier.Copy(&auctionOutputDTO, auctionsEntity); err != nil {
+		return nil, internal_error.NewInternalServerError(err.Error())
 	}
 
-	return auctionOutputs, nil
+	return auctionOutputDTO, nil
 }
 
-func (au *AuctionUseCase) FindWinningBidByAuctionId(
-	ctx context.Context,
-	auctionId string) (*WinningInfoOutputDTO, *internal_error.InternalError) {
-	auction, err := au.auctionRepositoryInterface.FindAuctionById(ctx, auctionId)
+func (bs *AuctionUseCase) FindWinningBidByAuctionId(ctx context.Context, auctionId string) (*WinningInfoOutputDTO, *internal_error.InternalError) {
+	auctionDomain, err := bs.auctionRepository.FindAuctionByAuctionId(ctx, auctionId)
 	if err != nil {
+		logger.Error(fmt.Sprintf("Error trying to find the auction_usecase with id %s", auctionId), err)
 		return nil, err
 	}
 
-	auctionOutputDTO := AuctionOutputDTO{
-		Id:          auction.Id,
-		ProductName: auction.ProductName,
-		Category:    auction.Category,
-		Description: auction.Description,
-		Condition:   ProductCondition(auction.Condition),
-		Status:      AuctionStatus(auction.Status),
-		Timestamp:   auction.Timestamp,
+	var auctionOutputDTO AuctionOutputDTO
+	if err := copier.Copy(&auctionOutputDTO, auctionDomain); err != nil {
+		return nil, internal_error.NewInternalServerError(err.Error())
 	}
 
-	bidWinning, err := au.bidRepositoryInterface.FindWinningBidByAuctionId(ctx, auction.Id)
+	winningBid, err := bs.bidRepository.FindWinningBidByAuctionId(ctx, auctionId)
 	if err != nil {
-		logger.Error("", err)
 		return &WinningInfoOutputDTO{
 			Auction: auctionOutputDTO,
 			Bid:     nil,
 		}, nil
 	}
 
-	bidOutputDTO := &bid_usecase.BidOutputDTO{
-		Id:        bidWinning.Id,
-		UserId:    bidWinning.UserId,
-		AuctionId: bidWinning.AuctionId,
-		Amount:    bidWinning.Amount,
-		Timestamp: bidWinning.Timestamp,
+	var bidOutputDTO bid_usecase.BidOutputDTO
+	if err := copier.Copy(&bidOutputDTO, winningBid); err != nil {
+		return nil, internal_error.NewInternalServerError(err.Error())
 	}
 
 	return &WinningInfoOutputDTO{
 		Auction: auctionOutputDTO,
-		Bid:     bidOutputDTO,
+		Bid:     &bidOutputDTO,
 	}, nil
 }
