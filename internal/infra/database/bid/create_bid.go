@@ -8,9 +8,7 @@ import (
 	"fullcycle-auction_go/internal/infra/database/auction"
 	"fullcycle-auction_go/internal/internal_error"
 	"go.mongodb.org/mongo-driver/mongo"
-	"os"
 	"sync"
-	"time"
 )
 
 type BidEntityMongo struct {
@@ -24,23 +22,12 @@ type BidEntityMongo struct {
 type BidRepository struct {
 	Collection        *mongo.Collection
 	AuctionRepository *auction.AuctionRepository
-
-	auctionInterval       time.Duration
-	auctionStatusMap      map[string]auction_entity.AuctionStatus
-	auctionEndTimeMap     map[string]time.Time
-	auctionStatusMapMutex *sync.Mutex
-	auctionEndTimeMutex   *sync.Mutex
 }
 
 func NewBidRepository(database *mongo.Database, auctionRepository *auction.AuctionRepository) *BidRepository {
 	return &BidRepository{
-		Collection:            database.Collection("bids"),
-		AuctionRepository:     auctionRepository,
-		auctionInterval:       getAuctionInterval(),
-		auctionStatusMap:      make(map[string]auction_entity.AuctionStatus),
-		auctionEndTimeMap:     make(map[string]time.Time),
-		auctionStatusMapMutex: &sync.Mutex{},
-		auctionEndTimeMutex:   &sync.Mutex{},
+		Collection:        database.Collection("bids"),
+		AuctionRepository: auctionRepository,
 	}
 }
 
@@ -55,34 +42,12 @@ func (bd *BidRepository) CreateBid(
 		go func(bidValue bid_entity.Bid) {
 			defer wg.Done()
 
-			bd.auctionStatusMapMutex.Lock()
-			auctionStatus, okStatus := bd.auctionStatusMap[bidValue.AuctionId]
-			bd.auctionStatusMapMutex.Unlock()
-
-			bd.auctionEndTimeMutex.Lock()
-			auctionEndTime, okEndTime := bd.auctionEndTimeMap[bidValue.AuctionId]
-			bd.auctionEndTimeMutex.Unlock()
-
 			bidEntityMongo := &BidEntityMongo{
 				Id:        bidValue.Id,
 				UserId:    bidValue.UserId,
 				AuctionId: bidValue.AuctionId,
 				Amount:    bidValue.Amount,
 				Timestamp: bidValue.Timestamp.Unix(),
-			}
-
-			if okEndTime && okStatus {
-				now := time.Now()
-				if auctionStatus == auction_entity.Completed || now.After(auctionEndTime) {
-					return
-				}
-
-				if _, err := bd.Collection.InsertOne(ctx, bidEntityMongo); err != nil {
-					logger.Error("Error trying to insert bid", err)
-					return
-				}
-
-				return
 			}
 
 			auctionEntity, err := bd.AuctionRepository.FindAuctionById(ctx, bidValue.AuctionId)
@@ -95,14 +60,6 @@ func (bd *BidRepository) CreateBid(
 				return
 			}
 
-			bd.auctionStatusMapMutex.Lock()
-			bd.auctionStatusMap[bidValue.AuctionId] = auctionEntity.Status
-			bd.auctionStatusMapMutex.Unlock()
-
-			bd.auctionEndTimeMutex.Lock()
-			bd.auctionEndTimeMap[bidValue.AuctionId] = auctionEntity.Timestamp.Add(bd.auctionInterval)
-			bd.auctionEndTimeMutex.Unlock()
-
 			if _, err := bd.Collection.InsertOne(ctx, bidEntityMongo); err != nil {
 				logger.Error("Error trying to insert bid", err)
 				return
@@ -112,14 +69,4 @@ func (bd *BidRepository) CreateBid(
 
 	wg.Wait()
 	return nil
-}
-
-func getAuctionInterval() time.Duration {
-	auctionInterval := os.Getenv("AUCTION_INTERVAL")
-	duration, err := time.ParseDuration(auctionInterval)
-	if err != nil {
-		return time.Minute * 5
-	}
-
-	return duration
 }
